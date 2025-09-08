@@ -111,6 +111,20 @@ model = WhisperModel("large", device="cpu", compute_type="int8")     # En doğru
 5. **Kaydı Durdur**: "Kaydı Durdur" butonuna tıkla
 6. **Sonucu Gör**: Transkripsiyon sonucu ekranda görüntülenir
 
+## 🖼️ Ekran Görüntüleri
+
+Ana ekran ve sonuç görünümü:
+
+![Ana Ekran](./resim1.jpeg)
+
+![Sonuç Görünümü](./resim2.jpeg)
+
+## 🎬 Demo Videosu
+
+Demoyu izlemek için videoyu açın:
+
+[Speech to Text Demo (MP4)](./speech%20to%20text%20video.mp4)
+
 ### API Kullanımı
 
 Backend API'sini doğrudan kullanabilirsiniz:
