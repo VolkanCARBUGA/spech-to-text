@@ -1,144 +1,143 @@
-import 'dart:io'; // Dosya işlemleri için (File, Platform)
-import 'dart:convert'; // JSON işlemleri için (jsonDecode)
-import 'package:flutter/material.dart'; // Flutter'ın temel bileşenleri (ChangeNotifier)
-import 'package:record/record.dart'; // Ses kaydı için (AudioRecorder, RecordConfig)
-import 'package:path_provider/path_provider.dart'; // Geçici dizin yolları için (getTemporaryDirectory)
-import 'package:http/http.dart' as http; // HTTP istekleri için (MultipartRequest)
-class SpeechToTextProvider extends ChangeNotifier { // ChangeNotifier: UI'ı güncellemek için state değişikliklerini bildirir
-  final record = AudioRecorder(); // Mikrofon kaydı için AudioRecorder nesnesi
-  bool isRecording = false; // Kayıt durumu: true = kayıt yapılıyor, false = kayıt yapılmıyor
-  String transcription = ""; // API'den dönen transkripsiyon metni
-  String? errorMessage; // Hata mesajı: null = hata yok, string = hata var
-  String? currentRecordingPath; // Mevcut kayıt dosyasının yolu (private değişken)
-  String? detectedLanguage; // Algılanan dil kodu (örn: "tr")
-  double? languageProbability; // Dil olasılığı (0..1)
-  void clearError() { // Hata mesajını sıfırlar ve UI'ı günceller
-    errorMessage = null; // Hata mesajını null yap
-    notifyListeners(); // UI'ı güncelle (Provider pattern)
+import 'dart:io';
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:record/record.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:http/http.dart' as http;
+class SpeechToTextProvider extends ChangeNotifier {
+  final record = AudioRecorder();
+  bool isRecording = false;
+  String transcription = "";
+  String? errorMessage;
+  String? currentRecordingPath;
+  String detectedLanguage="";
+  double? languageProbability;
+  void clearError() {
+    errorMessage = null;
+    notifyListeners();
   }
-  Future<String> getFilePath() async { // Async fonksiyon: Geçici dizinde benzersiz dosya adı oluşturur
-    try { // Hata yakalama bloğu başlangıcı
-      final dir = await getTemporaryDirectory(); // Sistem geçici dizinini al (iOS: /tmp, Android: /data/data/.../cache)     
-      final timestamp = DateTime.now().day; // Şu anki zamanı milisaniye cinsinden al
-      final fileName = "audio_$timestamp.m4a"; // iOS/macOS uyumlu AAC konteyner
-      final filePath = "${dir.path}/$fileName"; // Tam dosya yolu: "/tmp/audio_1703123456789.mp3"     
-      final file = File(filePath); // File nesnesi oluştur
-      await file.parent.create(recursive: true); // Ebeveyn dizini oluştur (recursive: alt dizinler de oluşturulur)      
-      return filePath; // Oluşturulan dosya yolunu döndür
-    } catch (e) { // Hata yakalama
-      throw Exception("Dosya yolu oluşturulamadı: $e"); // Hata durumunda exception fırlat
+  Future<String> getFilePath() async {
+    try {
+      final dir = await getTemporaryDirectory();
+      final timestamp = DateTime.now().day;
+      final fileName = "audio_$timestamp.m4a";
+      final filePath = "${dir.path}/$fileName";
+      final file = File(filePath);
+      await file.parent.create(recursive: true);
+      return filePath;
+    } catch (e) {
+      throw Exception("Dosya yolu oluşturulamadı: $e");
     }
   }
-  Future<bool> _ensurePermission() async { // Mikrofon izni kontrolü (record ile)
+  Future<bool> _ensurePermission() async {
     final has = await record.hasPermission();
     return has;
   }
-  Future<void> startRecording() async { // Async fonksiyon: Ses kaydını başlatır
-    try { // Hata yakalama bloğu başlangıcı
-      clearError(); // Önceki hata mesajlarını temizle
+  Future<void> startRecording() async {
+    try {
+      clearError();
       
-      // Önceki kayıt sonuçlarını temizle
-      transcription = ""; // Transkripsiyon metnini temizle
-      detectedLanguage = null; // Algılanan dili temizle
-      languageProbability = null; // Dil olasılığını temizle
+      transcription = "";
+      detectedLanguage = "";
+      languageProbability = null;
       
-      if (!await _ensurePermission()) { // Mikrofon izni yoksa
-        throw Exception("Mikrofon izni verilmedi. Lütfen ayarlardan izin verin."); // Hata fırlat
+      if (!await _ensurePermission()) {
+        throw Exception("Mikrofon izni verilmedi. Lütfen ayarlardan izin verin.");
       } 
-      await _startRecordingInternal(); // İç kayıt fonksiyonunu çağır     
-    } catch (e) { // Hata yakalama
-      if (errorMessage == null) { // Eğer henüz hata mesajı yoksa
+      await _startRecordingInternal();
+    } catch (e) {
+      if (errorMessage == null) {
         errorMessage = "Kayıt başlatma hatası: $e";   
-        debugPrint("Kayıt başlatma hatası: $e"); // Hata mesajını ayarla
-        notifyListeners(); // UI'ı güncelle
+        debugPrint("Kayıt başlatma hatası: $e");
+        notifyListeners();
       }
-      rethrow; // Hatayı yukarı fırlat (UI'da yakalanacak)
+      rethrow;
     }
   }
-  Future<void> _startRecordingInternal() async { // Private async fonksiyon: Asıl kayıt işlemini yapar
-    try { // Hata yakalama bloğu başlangıcı
-      final path = await getFilePath(); // Geçici dosya yolu al
-      currentRecordingPath = path; // Mevcut kayıt yolunu sakla      
-      final file = File(path); // File nesnesi oluştur
-      if (!await file.parent.exists()) { // Ebeveyn dizin yoksa
-        await file.parent.create(recursive: true); // Dizini oluştur
-      }     
-      await record.start( // Kayıt başlat
-        const RecordConfig( // Kayıt konfigürasyonu (iOS/macOS için uyumlu)
-          encoder: AudioEncoder.aacLc, // AAC-LC geniş destekli
-          sampleRate: 44100, // Yaygın destekli örnekleme hızı
-          numChannels: 1, // Mono kayıt
+  Future<void> _startRecordingInternal() async {
+    try {
+      final path = await getFilePath();
+      currentRecordingPath = path;
+      final file = File(path);
+      if (!await file.parent.exists()) {
+        await file.parent.create(recursive: true);
+      }
+      await record.start(
+        const RecordConfig(
+          encoder: AudioEncoder.aacLc,
+          sampleRate: 44100,
+          numChannels: 1,
         ),
-        path: path, // Kayıt dosyasının yolu
-      );      
-      isRecording = true; // Kayıt durumunu true yap
-      notifyListeners(); // UI'ı güncelle
-    } catch (e) { // Hata yakalama
-      if (e.toString().contains("permission")) { // İzin hatası
+        path: path,
+      );
+      isRecording = true;
+      notifyListeners();
+    } catch (e) {
+      if (e.toString().contains("permission")) {
         throw Exception("Mikrofon izni verilmedi. Lütfen izin verin.");
-      }     
-      if (e.toString().contains("ENOENT") || e.toString().contains("No such file")) { // Dosya hatası
+      }
+      if (e.toString().contains("ENOENT") || e.toString().contains("No such file")) {
         throw Exception("Kayıt dosyası oluşturulamadı. Uygulama izinlerini kontrol edin.");
       }
-      throw Exception("Kayıt başlatılamadı: $e"); // Genel hata
+      throw Exception("Kayıt başlatılamadı: $e");
     }
   }
-  Future<void> stopRecording() async { // Async fonksiyon: Kaydı durdurur ve API'ye gönderir
-    try { // Hata yakalama bloğu başlangıcı
-      if (!isRecording) { // Eğer kayıt yapılmıyorsa
-        return; // Hiçbir şey yapma
-      }    
-      final path = await record.stop(); // Kaydı durdur ve dosya yolunu al
-      isRecording = false; // Kayıt durumunu false yap
-      notifyListeners(); // UI'ı güncelle
-      if (path != null && path.isNotEmpty) { // Dosya yolu geçerliyse
-        final file = File(path); // File nesnesi oluştur
-        if (await file.exists()) { // Dosya varsa
-          final fileSize = await file.length(); // Dosya boyutunu al        
-          if (fileSize > 0) { // Dosya boş değilse
-            await sendToApi(file); // API'ye gönder
-          } else { // Dosya boşsa
-            throw Exception("Kayıt dosyası boş (0 bytes)"); // Hata fırlat
-          }
-        } else { // Dosya yoksa
-          throw Exception("Kayıt dosyası bulunamadı: $path"); // Hata fırlat
-        }
-      } else { // Dosya yolu geçersizse
-        throw Exception("Kayıt dosyası oluşturulamadı"); // Hata fırlat
+  Future<void> stopRecording() async {
+    try {
+      if (!isRecording) {
+        return;
       }
-    } catch (e) { // Hata yakalama
-      isRecording = false; // Kayıt durumunu false yap
-      notifyListeners(); // UI'ı güncelle
-      rethrow; // Hatayı yukarı fırlat
+      final path = await record.stop();
+      isRecording = false;
+      notifyListeners();
+      if (path != null && path.isNotEmpty) {
+        final file = File(path);
+        if (await file.exists()) {
+          final fileSize = await file.length();
+          if (fileSize > 0) {
+            await sendToApi(file);
+          } else {
+            throw Exception("Kayıt dosyası boş (0 bytes)");
+          }
+        } else {
+          throw Exception("Kayıt dosyası bulunamadı: $path");
+        }
+      } else {
+        throw Exception("Kayıt dosyası oluşturulamadı");
+      }
+    } catch (e) {
+      isRecording = false;
+      notifyListeners();
+      rethrow;
     }
   }
-  Future<void> sendToApi(File audioFile) async { // Async fonksiyon: Ses dosyasını API'ye gönderir
-    try { // Hata yakalama bloğu başlangıcı
-      var uri = Uri.parse("http://192.168.0.3:8000/transcribe"); // FastAPI backend adresi
-      var request = http.MultipartRequest('POST', uri); // POST isteği ile multipart form data
-      request.files.add(await http.MultipartFile.fromPath('file', audioFile.path)); // Ses dosyasını ekle
-      var response = await request.send(); // HTTP isteğini gönder
-      var respStr = await response.stream.bytesToString(); // Cevap stream'ini string'e çevir
-      var jsonResp = jsonDecode(respStr); // JSON string'i parse et
+  Future<void> sendToApi(File audioFile) async {
+    try {
+      var uri = Uri.parse("http://192.168.0.3:8000/transcribe");
+      var request = http.MultipartRequest('POST', uri);
+      request.files.add(await http.MultipartFile.fromPath('file', audioFile.path));
+      var response = await request.send();
+      var respStr = await response.stream.bytesToString();
+      var jsonResp = jsonDecode(respStr);
       final lang = jsonResp["language"];
       final prob = jsonResp["language_probability"];
       final text = jsonResp["transcription"];
-      detectedLanguage = lang is String ? lang : null;
+      detectedLanguage = lang is String ? lang : "";
       languageProbability = prob is num ? prob.toDouble() : null;
       transcription = text is String ? text : "Metin bulunamadı";
-      debugPrint("Dil: ${detectedLanguage ?? '-'} (${languageProbability?.toStringAsFixed(2) ?? '-'})");
+      debugPrint("Dil: $detectedLanguage (${languageProbability?.toStringAsFixed(2) ?? '-'})");
       debugPrint("Transkripsiyon: $transcription");
-      notifyListeners(); // UI'ı güncelle
-    } catch (e) { // Hata yakalama
-      transcription = "API hatası: $e";       
-      debugPrint("API hatası: $e"); // Hata mesajını transkripsiyon alanına yaz
-      notifyListeners(); // UI'ı güncelle
-      rethrow; // Hatayı yukarı fırlat
+      notifyListeners();
+    } catch (e) {
+      transcription = "API hatası: $e";
+      debugPrint("API hatası: $e");
+      notifyListeners();
+      rethrow;
     }
   }
   @override
-  void dispose() { // Widget dispose edildiğinde çağrılır
-    record.dispose(); // AudioRecorder kaynaklarını temizle
-    super.dispose(); // Parent dispose metodunu çağır
+  void dispose() {
+    record.dispose();
+    super.dispose();
   }
 }

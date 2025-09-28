@@ -48,7 +48,7 @@ class SpechToTextPage extends StatelessWidget {
                 title: 'Transkripsiyon Sonucu',
                 description: provider.transcription,
               ),
-            if (provider.detectedLanguage != null)
+            if (provider.detectedLanguage.isNotEmpty)
               InfoContainer(
                 title: 'Konuşma Dili',
                 description:
